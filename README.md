@@ -1,1 +1,1 @@
-This application helps people who work at Blackbaud support automatically put their on-call times on their calendars
+This application helps people who work at Blackbaud support in Austin automatically put their on-call times on their calendars

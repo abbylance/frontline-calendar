@@ -3,10 +3,12 @@ import argparse
 import httplib2
 import oauth2client
 import os
+import sys
 from apiclient import discovery
 from oauth2client import client
 from oauth2client import tools
 import arrow
+from dateutil import tz
 
 SCOPES = ['https://www.googleapis.com/auth/calendar',
           'https://www.googleapis.com/auth/spreadsheets.readonly']
@@ -116,7 +118,7 @@ def create_google_calendar_event(appointment, calendar_service, summary):
         'description': 'This event was created by Frontline Calendar. Contact charles@connells.org with issues.'
     }
 
-    #event = calendar_service.events().insert(calendarId='primary', body=event).execute()
+    event = calendar_service.events().insert(calendarId='primary', body=event).execute()
     print('Google Calendar event created. Link: {0} Details: {1}'.format(event.get('htmlLink'), event))
 
 
@@ -130,11 +132,15 @@ def main():
     date = arrow.get(flags.date, 'YYYY-MM-DD')
 
     credentials = get_credentials(flags)
-    http = credentials.authorize(httplib2.Http())
+    exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    ca_certs = os.path.join(exe_dir, 'certs/cacerts.txt')
+    chicago_zoneinfo = os.path.join(exe_dir, 'zoneinfo/Chicago')
+    http = credentials.authorize(httplib2.Http(ca_certs=ca_certs))
 
     sheets_service = discovery.build('sheets', 'v4', http=http)
 
-    midnight = arrow.Arrow(date.year, date.month, date.day, tzinfo='America/Chicago')
+    with open(chicago_zoneinfo, 'rb') as zonefile:
+        midnight = arrow.Arrow(date.year, date.month, date.day, tzinfo=tz.tzfile(zonefile))
     appointments = appointments_from_google_sheet(sheets_service, flags.spreadsheet_id, flags.row, midnight)
 
     calendar_service = discovery.build('calendar', 'v3', http=http)
