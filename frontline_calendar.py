@@ -9,6 +9,7 @@ from oauth2client import client
 from oauth2client import tools
 import arrow
 from dateutil import tz
+from pyexchange import Exchange2010Service, ExchangeNTLMAuthConnection
 
 SCOPES = ['https://www.googleapis.com/auth/calendar',
           'https://www.googleapis.com/auth/spreadsheets.readonly']
@@ -38,20 +39,13 @@ def get_credentials(flags):
     if not credentials or credentials.invalid:
         flow = client.flow_from_clientsecrets(CLIENT_SECRET_FILE, SCOPES)
         flow.user_agent = APPLICATION_NAME
-        if flags:
-            credentials = tools.run_flow(flow, store, flags)
-        else: # Needed only for compatibility with Python 2.6
-            credentials = tools.run(flow, store)
+        credentials = tools.run_flow(flow, store, flags)
         print('Storing credentials to ' + credential_path)
     return credentials
-
-# http://localhost:8080/?code=4/JWduMs6FkInxHnYfA-LE3J3b1mfAWFZCPMtHQf5aRUg#
 
 def time_from_cell_index(index, day):
     minutes = FIRST_CELL_MINUTES_AFTER_MIDNIGHT + (index * 15)
     return day.replace(minutes=minutes)
-    #return Arrow.range('minute', day, )
-    #return day.range('minute')
 
 def appointments_from_google_sheet(service, spreadsheet_id, row, midnight):
     rangeName = "'{date}'!K{row}:BF{row}".format(row=row, date=midnight.strftime("%a %m.%d.%y"))
@@ -84,7 +78,7 @@ def appointments_from_google_sheet(service, spreadsheet_id, row, midnight):
     return appointments
 
 
-def create_calendar_events(appointments, calendar_service):
+def create_calendar_events(appointments, google_calendar_service, outlook_calendar_service):
     for appointment in appointments:
         summary = None
         if appointment.appointment_type == 'F':
@@ -92,8 +86,11 @@ def create_calendar_events(appointments, calendar_service):
         elif appointment.appointment_type == 'C':
             summary = 'On Chat'
 
-        if summary and not google_calendar_event_exists(appointment, calendar_service, summary):
-            create_google_calendar_event(appointment, calendar_service, summary)
+        if summary:
+            if not google_calendar_event_exists(appointment, google_calendar_service, summary):
+                create_google_calendar_event(appointment, google_calendar_service, summary)
+            if not outlook_calendar_event_exists(appointment, outlook_calendar_service, summary):
+                create_outlook_calendar_event(appointment, outlook_calendar_service, summary)
 
 
 def google_calendar_event_exists(appointment, calendar_service, summary):
@@ -104,6 +101,8 @@ def google_calendar_event_exists(appointment, calendar_service, summary):
     if matching_events and matching_events['items']:
         print("Found {count} matching events for appointment {app}. Will not create a new one.".format(count=len(matching_events['items']), app=appointment))
         return True
+
+    return False
 
 
 def create_google_calendar_event(appointment, calendar_service, summary):
@@ -122,11 +121,42 @@ def create_google_calendar_event(appointment, calendar_service, summary):
     print('Google Calendar event created. Link: {0} Details: {1}'.format(event.get('htmlLink'), event))
 
 
+def outlook_calendar_event_exists(appointment, calendar_service, summary):
+    matching_events = calendar_service.calendar().list_events(
+        start=appointment.start_time.datetime,
+        end=appointment.end_time.datetime,
+        details=True)
+
+    if matching_events:
+        for event in matching_events:
+            if event.subject == summary:
+                print("Found a matching events for appointment {app}. Will not create a new one.".format(app=appointment))
+                return True
+
+    return False
+
+
+def create_outlook_calendar_event(appointment, calendar_service, summary):
+    event = calendar_service.calendar().new_event(
+        subject=summary,
+        text_body='This event was created by Frontline Calendar. Contact charles@connells.org with issues.',
+        start=appointment.start_time.datetime.isoformat(),
+        end=appointment.end_time.datetime.isoformat()
+    )
+
+    #event.create()
+    print('Outlook calendar event created. Details: {0}'.format(event))
+
+
+
 def main():
     parser = argparse.ArgumentParser(parents=[tools.argparser])
     parser.add_argument('date', help='Which date to examine the ECBU Luminate Support Weekly Schedule for. Use format YYYY-MM-DD.')
     parser.add_argument('row', help='Which row in the spreadsheet is your schedule on?')
     parser.add_argument('--spreadsheet_id', help='The ID of the ECBU Luminate Support Weekly Schedule spreadsheet', default='1RgDgDRcyAFDdkEyRH7m_4QOtJ7e-kv324hEWE4JuwgI')
+    parser.add_argument('--exchange_url', help='URL of Blackbaud exchange server, defaults to https://your.email.server.com.here/EWS/Exchange.asmx', default='https://your.email.server.com.here/EWS/Exchange.asmx')
+    parser.add_argument('--exchange_username', help='The username you use in Outlook')
+    parser.add_argument('--exchange_password', help='The password you use in Outlook')
 
     flags = parser.parse_args()
     date = arrow.get(flags.date, 'YYYY-MM-DD')
@@ -139,12 +169,19 @@ def main():
 
     sheets_service = discovery.build('sheets', 'v4', http=http)
 
+    # Set up the connection to Exchange
+    exchange_connection = ExchangeNTLMAuthConnection(url=flags.exchange_url,
+                                                     username=flags.exchange_username,
+                                                     password=flags.exchange_password)
+
+    exchange_service = Exchange2010Service(exchange_connection)
+
     with open(chicago_zoneinfo, 'rb') as zonefile:
         midnight = arrow.Arrow(date.year, date.month, date.day, tzinfo=tz.tzfile(zonefile))
     appointments = appointments_from_google_sheet(sheets_service, flags.spreadsheet_id, flags.row, midnight)
 
-    calendar_service = discovery.build('calendar', 'v3', http=http)
-    create_calendar_events(appointments, calendar_service)
+    google_calendar_service = discovery.build('calendar', 'v3', http=http)
+    create_calendar_events(appointments, google_calendar_service, exchange_service)
 
 if __name__ == "__main__":
     main()
