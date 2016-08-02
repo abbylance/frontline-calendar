@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 
 import httplib2
 import oauth2client
@@ -9,7 +10,11 @@ from oauth2client import client
 from oauth2client import tools
 import arrow
 from dateutil import tz
-from pyexchange import Exchange2010Service, ExchangeNTLMAuthConnection
+from exchangelib import DELEGATE, services, AllProperties
+from exchangelib.credentials import Credentials
+from exchangelib.account import Account
+from exchangelib.ewsdatetime import EWSDateTime, EWSTimeZone
+from exchangelib.folders import CalendarItem
 
 SCOPES = ['https://www.googleapis.com/auth/calendar',
           'https://www.googleapis.com/auth/spreadsheets.readonly']
@@ -99,7 +104,7 @@ def google_calendar_event_exists(appointment, calendar_service, summary):
                                                      timeMax=appointment.end_time.datetime.isoformat(),
                                                      q=summary).execute()
     if matching_events and matching_events['items']:
-        print("Found {count} matching events for appointment {app}. Will not create a new one.".format(count=len(matching_events['items']), app=appointment))
+        print("Found {count} matching Google Calendar events for appointment {app}. Will not create a new one.".format(count=len(matching_events['items']), app=appointment))
         return True
 
     return False
@@ -122,29 +127,49 @@ def create_google_calendar_event(appointment, calendar_service, summary):
 
 
 def outlook_calendar_event_exists(appointment, calendar_service, summary):
-    matching_events = calendar_service.calendar().list_events(
-        start=appointment.start_time.datetime,
-        end=appointment.end_time.datetime,
-        details=True)
+    ews_tz = EWSTimeZone.timezone('America/Chicago')
+
+    d = appointment.start_time.datetime
+    start_date_time = datetime(d.year, d.month, d.day, d.hour, d.minute, d.second, d.microsecond, ews_tz)
+    start_ews_date_time = EWSDateTime.from_datetime(start_date_time)
+
+    d = appointment.end_time.datetime
+    end_date_time = datetime(d.year, d.month, d.day, d.hour, d.minute, d.second, d.microsecond, ews_tz)
+    end_ews_date_time = EWSDateTime.from_datetime(end_date_time)
+
+    matching_events = calendar_service.calendar.find_items(
+        start=start_ews_date_time,
+        end=end_ews_date_time,
+        shape=AllProperties)
 
     if matching_events:
         for event in matching_events:
             if event.subject == summary:
-                print("Found a matching events for appointment {app}. Will not create a new one.".format(app=appointment))
+                print("Found a matching Outlook calendar event for appointment {app}. Will not create a new one.".format(app=appointment))
                 return True
 
     return False
 
 
 def create_outlook_calendar_event(appointment, calendar_service, summary):
-    event = calendar_service.calendar().new_event(
+    ews_tz = EWSTimeZone.timezone('America/Chicago')
+
+    d = appointment.start_time.datetime
+    start_date_time = datetime(d.year, d.month, d.day, d.hour, d.minute, d.second, d.microsecond, ews_tz)
+    start_ews_date_time = EWSDateTime.from_datetime(start_date_time)
+
+    d = appointment.end_time.datetime
+    end_date_time = datetime(d.year, d.month, d.day, d.hour, d.minute, d.second, d.microsecond, ews_tz)
+    end_ews_date_time = EWSDateTime.from_datetime(end_date_time)
+
+    event = CalendarItem(
         subject=summary,
-        text_body='This event was created by Frontline Calendar. Contact charles@connells.org with issues.',
-        start=appointment.start_time.datetime.isoformat(),
-        end=appointment.end_time.datetime.isoformat()
+        body='This event was created by Frontline Calendar. Contact charles@connells.org with issues.',
+        start=start_ews_date_time,
+        end=end_ews_date_time
     )
 
-    #event.create()
+    calendar_service.calendar.add_items([event])
     print('Outlook calendar event created. Details: {0}'.format(event))
 
 
@@ -154,8 +179,7 @@ def main():
     parser.add_argument('date', help='Which date to examine the ECBU Luminate Support Weekly Schedule for. Use format YYYY-MM-DD.')
     parser.add_argument('row', help='Which row in the spreadsheet is your schedule on?')
     parser.add_argument('--spreadsheet_id', help='The ID of the ECBU Luminate Support Weekly Schedule spreadsheet', default='1RgDgDRcyAFDdkEyRH7m_4QOtJ7e-kv324hEWE4JuwgI')
-    parser.add_argument('--exchange_url', help='URL of Blackbaud exchange server, defaults to https://your.email.server.com.here/EWS/Exchange.asmx', default='https://your.email.server.com.here/EWS/Exchange.asmx')
-    parser.add_argument('--exchange_username', help='The username you use in Outlook')
+    parser.add_argument('--exchange_username', help='The username you use in Outlook, should be Firstname.Lastname@Blackbaud.me')
     parser.add_argument('--exchange_password', help='The password you use in Outlook')
 
     flags = parser.parse_args()
@@ -169,19 +193,16 @@ def main():
 
     sheets_service = discovery.build('sheets', 'v4', http=http)
 
-    # Set up the connection to Exchange
-    exchange_connection = ExchangeNTLMAuthConnection(url=flags.exchange_url,
-                                                     username=flags.exchange_username,
-                                                     password=flags.exchange_password)
-
-    exchange_service = Exchange2010Service(exchange_connection)
+    exchange_credentials = Credentials(username=flags.exchange_username, password=flags.exchange_password)
+    exchange_account = Account(primary_smtp_address='Abigail.Lance@blackbaud.com', credentials=exchange_credentials, autodiscover=True, access_type=DELEGATE)
 
     with open(chicago_zoneinfo, 'rb') as zonefile:
-        midnight = arrow.Arrow(date.year, date.month, date.day, tzinfo=tz.tzfile(zonefile))
+        timezone = tz.tzfile(zonefile)
+        midnight = arrow.Arrow(date.year, date.month, date.day, tzinfo=timezone)
     appointments = appointments_from_google_sheet(sheets_service, flags.spreadsheet_id, flags.row, midnight)
 
     google_calendar_service = discovery.build('calendar', 'v3', http=http)
-    create_calendar_events(appointments, google_calendar_service, exchange_service)
+    create_calendar_events(appointments, google_calendar_service, exchange_account)
 
 if __name__ == "__main__":
     main()
