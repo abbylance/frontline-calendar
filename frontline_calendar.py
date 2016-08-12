@@ -132,7 +132,7 @@ def create_google_calendar_event(appointment, calendar_service, summary):
                 }
             ]
         },
-        'description': 'This event was created by Frontline Calendar. Contact charles@connells.org with issues.'
+        'description': 'This event was created by Frontline Calendar. Contact Abby Lance with issues.'
     }
 
     event = calendar_service.events().insert(calendarId='primary', body=event).execute()
@@ -189,7 +189,7 @@ def create_outlook_calendar_event(appointment, calendar_service, summary):
 
     event = CalendarItem(
         subject=summary,
-        body='This event was created by Frontline Calendar. Contact charles@connells.org with issues.',
+        body='This event was created by Frontline Calendar. Contact Abby Lance with issues.',
         start=start_ews_date_time,
         end=end_ews_date_time
     )
