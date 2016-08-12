@@ -4,13 +4,11 @@ from datetime import datetime
 import httplib2
 import oauth2client
 import os
-import sys
 from apiclient import discovery
 from oauth2client import client
 from oauth2client import tools
 import arrow
-from dateutil import tz
-from exchangelib import DELEGATE, services, AllProperties
+from exchangelib import DELEGATE, AllProperties
 from exchangelib.credentials import Credentials
 from exchangelib.account import Account
 from exchangelib.ewsdatetime import EWSDateTime, EWSTimeZone
@@ -24,6 +22,7 @@ APPLICATION_NAME = 'Frontline Calendar'
 
 FIRST_CELL_MINUTES_AFTER_MIDNIGHT = 7 * 60
 
+
 class Appointment:
     start_time = 0
     end_time = 0
@@ -31,6 +30,7 @@ class Appointment:
 
     def __repr__(self):
         return "{0}: {1} - {2}".format(self.appointment_type, self.start_time, self.end_time)
+
 
 def get_credentials(flags):
     home_dir = os.path.expanduser('~')
@@ -44,13 +44,16 @@ def get_credentials(flags):
     if not credentials or credentials.invalid:
         flow = client.flow_from_clientsecrets(CLIENT_SECRET_FILE, SCOPES)
         flow.user_agent = APPLICATION_NAME
+        flags.noauth_local_webserver = True
         credentials = tools.run_flow(flow, store, flags)
         print('Storing credentials to ' + credential_path)
     return credentials
 
+
 def time_from_cell_index(index, day):
     minutes = FIRST_CELL_MINUTES_AFTER_MIDNIGHT + (index * 15)
     return day.replace(minutes=minutes)
+
 
 def appointments_from_google_sheet(service, spreadsheet_id, row, midnight):
     rangeName = "'{date}'!K{row}:BF{row}".format(row=row, date=midnight.strftime("%a %m.%d.%y"))
@@ -83,7 +86,7 @@ def appointments_from_google_sheet(service, spreadsheet_id, row, midnight):
     return appointments
 
 
-def create_calendar_events(appointments, google_calendar_service, outlook_calendar_service):
+def create_google_calendar_events(appointments, google_calendar_service):
     for appointment in appointments:
         summary = None
         if appointment.appointment_type == 'F':
@@ -91,11 +94,8 @@ def create_calendar_events(appointments, google_calendar_service, outlook_calend
         elif appointment.appointment_type == 'C':
             summary = 'On Chat'
 
-        if summary:
-            if not google_calendar_event_exists(appointment, google_calendar_service, summary):
-                create_google_calendar_event(appointment, google_calendar_service, summary)
-            if not outlook_calendar_event_exists(appointment, outlook_calendar_service, summary):
-                create_outlook_calendar_event(appointment, outlook_calendar_service, summary)
+        if summary and not google_calendar_event_exists(appointment, google_calendar_service, summary):
+            create_google_calendar_event(appointment, google_calendar_service, summary)
 
 
 def google_calendar_event_exists(appointment, calendar_service, summary):
@@ -124,6 +124,18 @@ def create_google_calendar_event(appointment, calendar_service, summary):
 
     event = calendar_service.events().insert(calendarId='primary', body=event).execute()
     print('Google Calendar event created. Link: {0} Details: {1}'.format(event.get('htmlLink'), event))
+
+
+def create_outlook_calendar_events(appointments, outlook_calendar_service):
+    for appointment in appointments:
+        summary = None
+        if appointment.appointment_type == 'F':
+            summary = 'On Phones'
+        elif appointment.appointment_type == 'C':
+            summary = 'On Chat'
+
+        if summary and not outlook_calendar_event_exists(appointment, outlook_calendar_service, summary):
+            create_outlook_calendar_event(appointment, outlook_calendar_service, summary)
 
 
 def outlook_calendar_event_exists(appointment, calendar_service, summary):
@@ -173,36 +185,39 @@ def create_outlook_calendar_event(appointment, calendar_service, summary):
     print('Outlook calendar event created. Details: {0}'.format(event))
 
 
-
 def main():
     parser = argparse.ArgumentParser(parents=[tools.argparser])
     parser.add_argument('date', help='Which date to examine the ECBU Luminate Support Weekly Schedule for. Use format YYYY-MM-DD.')
     parser.add_argument('row', help='Which row in the spreadsheet is your schedule on?')
+    parser.add_argument('--google_calendar', action='store_true')
+    parser.add_argument('--outlook_calendar', action='store_true')
     parser.add_argument('--spreadsheet_id', help='The ID of the ECBU Luminate Support Weekly Schedule spreadsheet', default='1RgDgDRcyAFDdkEyRH7m_4QOtJ7e-kv324hEWE4JuwgI')
     parser.add_argument('--exchange_username', help='The username you use in Outlook, should be Firstname.Lastname@Blackbaud.me')
     parser.add_argument('--exchange_password', help='The password you use in Outlook')
 
     flags = parser.parse_args()
+
+    if not flags.google_calendar or flags.outlook_calendar:
+        print("You need to specify --google_calendar and/or --outlook_calendar")
+        return
+
     date = arrow.get(flags.date, 'YYYY-MM-DD')
 
     credentials = get_credentials(flags)
-    exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-    ca_certs = os.path.join(exe_dir, 'certs/cacerts.txt')
-    chicago_zoneinfo = os.path.join(exe_dir, 'zoneinfo/Chicago')
-    http = credentials.authorize(httplib2.Http(ca_certs=ca_certs))
 
+    http = credentials.authorize(httplib2.Http())
     sheets_service = discovery.build('sheets', 'v4', http=http)
-
-    exchange_credentials = Credentials(username=flags.exchange_username, password=flags.exchange_password)
-    exchange_account = Account(primary_smtp_address='Abigail.Lance@blackbaud.com', credentials=exchange_credentials, autodiscover=True, access_type=DELEGATE)
-
-    with open(chicago_zoneinfo, 'rb') as zonefile:
-        timezone = tz.tzfile(zonefile)
-        midnight = arrow.Arrow(date.year, date.month, date.day, tzinfo=timezone)
+    midnight = arrow.Arrow(date.year, date.month, date.day, tzinfo='America/Chicago')
     appointments = appointments_from_google_sheet(sheets_service, flags.spreadsheet_id, flags.row, midnight)
 
-    google_calendar_service = discovery.build('calendar', 'v3', http=http)
-    create_calendar_events(appointments, google_calendar_service, exchange_account)
+    if flags.google_calendar:
+        google_calendar_service = discovery.build('calendar', 'v3', http=http)
+        create_google_calendar_events(appointments, google_calendar_service)
+
+    if flags.outlook_calendar:
+        exchange_credentials = Credentials(username=flags.exchange_username, password=flags.exchange_password)
+        exchange_account = Account(primary_smtp_address='Abigail.Lance@blackbaud.com', credentials=exchange_credentials, autodiscover=True, access_type=DELEGATE)
+        create_outlook_calendar_events(appointments, exchange_account)
 
 if __name__ == "__main__":
     main()
