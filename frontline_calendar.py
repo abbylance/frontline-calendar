@@ -1,6 +1,8 @@
 import argparse
 from datetime import datetime
 
+import sys
+
 import httplib2
 import oauth2client
 import os
@@ -209,6 +211,8 @@ def main():
     parser.add_argument('--exchange_password', help='The password you use in Outlook')
 
     flags = parser.parse_args()
+
+    print("Running with args: " + str(sys.argv))
 
     if not flags.google_calendar or flags.outlook_calendar:
         print("You need to specify --google_calendar and/or --outlook_calendar")
