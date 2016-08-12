@@ -119,6 +119,19 @@ def create_google_calendar_event(appointment, calendar_service, summary):
             'end': {
                 'dateTime': appointment.end_time.datetime.isoformat()
             },
+        'reminders': {
+            'useDefault': False,
+            'overrides': [
+                {
+                    'method': 'popup',
+                    'minutes': '5'
+                },
+                {
+                    'method': 'popup',
+                    'minutes': '0'
+                }
+            ]
+        },
         'description': 'This event was created by Frontline Calendar. Contact charles@connells.org with issues.'
     }
 
