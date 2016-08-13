@@ -7,6 +7,7 @@ import httplib2
 import oauth2client
 import os
 from apiclient import discovery
+from googleapiclient.errors import HttpError
 from oauth2client import client
 from oauth2client import tools
 import arrow
@@ -58,15 +59,20 @@ def time_from_cell_index(index, day):
 
 
 def appointments_from_google_sheet(service, spreadsheet_id, row, midnight):
+    appointments = []
     rangeName = "'{date}'!K{row}:BF{row}".format(row=row, date=midnight.strftime("%a %m.%d.%y"))
 
-    result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=rangeName).execute()
+    try:
+        result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=rangeName).execute()
+    except HttpError:
+        print("Could not find cells on spreadsheet in range {0}".format(rangeName))
+        return appointments
+
     time_blocks = result.get('values', [])
     # shed outer list
     if isinstance(time_blocks, list):
         time_blocks = time_blocks[0]
 
-    appointments = []
     currentAppointment = None
     for i in range(0, len(time_blocks)):
         time_block_type = time_blocks[i]
@@ -88,16 +94,27 @@ def appointments_from_google_sheet(service, spreadsheet_id, row, midnight):
     return appointments
 
 
-def create_google_calendar_events(appointments, google_calendar_service):
-    for appointment in appointments:
-        summary = None
-        if appointment.appointment_type == 'F':
-            summary = 'On Phones'
-        elif appointment.appointment_type == 'C':
-            summary = 'On Chat'
+def appointment_summary(appointment):
+    summary = None
+    if appointment.appointment_type == 'F':
+        summary = 'On Phones'
+    elif appointment.appointment_type == 'C':
+        summary = 'On Chat'
 
-        if summary and not google_calendar_event_exists(appointment, google_calendar_service, summary):
-            create_google_calendar_event(appointment, google_calendar_service, summary)
+    return summary
+
+
+def create_google_calendar_events(appointments, google_calendar_service):
+    events_made = 0
+    for appointment in appointments:
+        summary = appointment_summary(appointment)
+
+        if summary:
+            if not google_calendar_event_exists(appointment, google_calendar_service, summary):
+                create_google_calendar_event(appointment, google_calendar_service, summary)
+            events_made += 1
+
+    return events_made
 
 
 def google_calendar_event_exists(appointment, calendar_service, summary):
@@ -142,15 +159,16 @@ def create_google_calendar_event(appointment, calendar_service, summary):
 
 
 def create_outlook_calendar_events(appointments, outlook_calendar_service):
+    events_made = 0
     for appointment in appointments:
-        summary = None
-        if appointment.appointment_type == 'F':
-            summary = 'On Phones'
-        elif appointment.appointment_type == 'C':
-            summary = 'On Chat'
+        summary = appointment_summary(appointment)
 
-        if summary and not outlook_calendar_event_exists(appointment, outlook_calendar_service, summary):
-            create_outlook_calendar_event(appointment, outlook_calendar_service, summary)
+        if summary:
+            if not outlook_calendar_event_exists(appointment, outlook_calendar_service, summary):
+                create_outlook_calendar_event(appointment, outlook_calendar_service, summary)
+            events_made += 1
+
+    return events_made
 
 
 def outlook_calendar_event_exists(appointment, calendar_service, summary):
@@ -202,7 +220,7 @@ def create_outlook_calendar_event(appointment, calendar_service, summary):
 
 def main():
     parser = argparse.ArgumentParser(parents=[tools.argparser])
-    parser.add_argument('date', help='Which date to examine the ECBU Luminate Support Weekly Schedule for. Use format YYYY-MM-DD.')
+    parser.add_argument('date', help='What is the current date? Use format YYYY-MM-DD.')
     parser.add_argument('row', help='Which row in the spreadsheet is your schedule on?')
     parser.add_argument('--google_calendar', action='store_true')
     parser.add_argument('--outlook_calendar', action='store_true')
@@ -218,23 +236,36 @@ def main():
         print("You need to specify --google_calendar and/or --outlook_calendar")
         return
 
-    date = arrow.get(flags.date, 'YYYY-MM-DD')
+    today = arrow.get(flags.date, 'YYYY-MM-DD')
+    dates = [today.replace(days=+n) for n in range(0, 10)]
 
     credentials = get_credentials(flags)
 
     http = credentials.authorize(httplib2.Http())
     sheets_service = discovery.build('sheets', 'v4', http=http)
-    midnight = arrow.Arrow(date.year, date.month, date.day, tzinfo='America/Chicago')
-    appointments = appointments_from_google_sheet(sheets_service, flags.spreadsheet_id, flags.row, midnight)
 
+    google_calendar_service = None
     if flags.google_calendar:
         google_calendar_service = discovery.build('calendar', 'v3', http=http)
-        create_google_calendar_events(appointments, google_calendar_service)
 
+    exchange_account = None
     if flags.outlook_calendar:
         exchange_credentials = Credentials(username=flags.exchange_username, password=flags.exchange_password)
         exchange_account = Account(primary_smtp_address='Abigail.Lance@blackbaud.com', credentials=exchange_credentials, autodiscover=True, access_type=DELEGATE)
-        create_outlook_calendar_events(appointments, exchange_account)
+
+    for date in dates:
+        midnight = arrow.Arrow(date.year, date.month, date.day, tzinfo='America/Chicago')
+        appointments = appointments_from_google_sheet(sheets_service, flags.spreadsheet_id, flags.row, midnight)
+
+        if google_calendar_service:
+            events_made = create_google_calendar_events(appointments, google_calendar_service)
+            if events_made == 0:
+                print("No shifts found for {0}".format(date))
+
+        if exchange_account:
+            events_made = create_outlook_calendar_events(appointments, exchange_account)
+            if events_made == 0:
+                print("No shifts found for {0}".format(date))
 
 if __name__ == "__main__":
     main()
