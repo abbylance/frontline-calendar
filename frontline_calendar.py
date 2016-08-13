@@ -220,7 +220,8 @@ def create_outlook_calendar_event(appointment, calendar_service, summary):
 
 def main():
     parser = argparse.ArgumentParser(parents=[tools.argparser])
-    parser.add_argument('date', help='What is the current date? Use format YYYY-MM-DD.')
+    parser.add_argument('date', help='What date to start looking at the calendar? Use format YYYY-MM-DD.')
+    parser.add_argument('look_ahead_days', help='How many days to look ahead from the starting date?')
     parser.add_argument('row', help='Which row in the spreadsheet is your schedule on?')
     parser.add_argument('--google_calendar', action='store_true')
     parser.add_argument('--outlook_calendar', action='store_true')
@@ -237,7 +238,7 @@ def main():
         return
 
     today = arrow.get(flags.date, 'YYYY-MM-DD')
-    dates = [today.replace(days=+n) for n in range(0, 10)]
+    dates = [today.replace(days=+n) for n in range(0, int(flags.look_ahead_days))]
 
     credentials = get_credentials(flags)
 
