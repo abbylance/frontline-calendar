@@ -69,6 +69,11 @@ def main():
         if date.weekday() in [5, 6]:  # skip weekends
             continue
 
+        # if no appointments are found, don't try to schedule lunch
+        if not abby_appointments or not ali_appointments:
+            print("No schedule yet defined for {0}".format(date))
+            continue
+
         lunch_ranges = [Range(LUNCH_EARLIEST, LUNCH_LATEST)]
         for appointment in abby_appointments + ali_appointments:
             if appointment.appointment_type in ['F', 'C', 'PTO']:
