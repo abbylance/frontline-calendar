@@ -1,14 +1,11 @@
-
 import os
 from datetime import datetime
-
 import oauth2client
 from exchangelib import EWSTimeZone, EWSDateTime, AllProperties
 from exchangelib.folders import CalendarItem
 from googleapiclient.errors import HttpError
 from oauth2client import client
 from oauth2client import tools
-
 
 FIRST_CELL_MINUTES_AFTER_MIDNIGHT = 7 * 60
 
@@ -103,18 +100,18 @@ def appointments_from_google_sheet(service, spreadsheet_id, row, midnight):
         time_block_type = time_blocks[i]
         # if there is an appointment in progress of the same type, extend it
         if currentAppointment and currentAppointment.appointment_type == time_block_type:
-            currentAppointment.end_time = time_from_cell_index(i+1, midnight)
+            currentAppointment.end_time = time_from_cell_index(i + 1, midnight)
         # start a new appointment
         else:
             if currentAppointment:
                 appointments.append(currentAppointment)
-            currentAppointment = Appointment(time_from_cell_index(i, midnight), time_from_cell_index(i+1, midnight), time_block_type)
+            currentAppointment = Appointment(time_from_cell_index(i, midnight), time_from_cell_index(i + 1, midnight),
+                                             time_block_type)
 
     # clean up the last appointment
     appointments.append(currentAppointment)
 
     return appointments
-
 
 
 def create_google_calendar_events(appointments, google_calendar_service):
@@ -135,9 +132,14 @@ def google_calendar_event_exists(appointment, calendar_service, summary):
                                                      timeMin=appointment.start_time.datetime.isoformat(),
                                                      timeMax=appointment.end_time.datetime.isoformat(),
                                                      q=summary).execute()
-    if matching_events and matching_events['items']:
-        print("Found {count} matching Google Calendar events for appointment {app}. Will not create a new one.".format(count=len(matching_events['items']), app=appointment))
-        return True
+    if matching_events:
+        for matching_event in matching_events['items']:
+            if matching_event['start'] and matching_event['start']['dateTime'] and \
+                            matching_event['start']['dateTime'] == appointment.start_time.datetime.isoformat() and \
+                            matching_event['end'] and matching_event['end']['dateTime'] and \
+                            matching_event['end']['dateTime'] == appointment.end_time.datetime.isoformat():
+                print("Found matching Google Calendar event for appointment {app}. Will not create a new one.".format(app=appointment))
+                return True
 
     return False
 
@@ -145,12 +147,12 @@ def google_calendar_event_exists(appointment, calendar_service, summary):
 def create_google_calendar_event(appointment, calendar_service, summary):
     event = {
         'summary': summary,
-            'start': {
-                'dateTime': appointment.start_time.datetime.isoformat()
-            },
-            'end': {
-                'dateTime': appointment.end_time.datetime.isoformat()
-            },
+        'start': {
+            'dateTime': appointment.start_time.datetime.isoformat()
+        },
+        'end': {
+            'dateTime': appointment.end_time.datetime.isoformat()
+        },
         'reminders': {
             'useDefault': False,
             'overrides': [
@@ -203,7 +205,9 @@ def outlook_calendar_event_exists(appointment, calendar_service, summary):
     if matching_events:
         for event in matching_events:
             if event.subject == summary:
-                print("Found a matching Outlook calendar event for appointment {app}. Will not create a new one.".format(app=appointment))
+                print(
+                    "Found a matching Outlook calendar event for appointment {app}. Will not create a new one.".format(
+                        app=appointment))
                 return True
 
     return False
