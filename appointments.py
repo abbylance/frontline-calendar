@@ -90,9 +90,13 @@ def appointments_from_google_sheet(service, spreadsheet_id, row, midnight):
         print("Could not find cells on spreadsheet in range {0}".format(rangeName))
         return appointments
 
+    if 'values' not in result:
+        print("Could not find cells on spreadsheet in range {0}".format(rangeName))
+        return appointments
+
     time_blocks = result.get('values', [])
     # shed outer list
-    if isinstance(time_blocks, list):
+    if isinstance(time_blocks, list) and len(time_blocks) > 0 and isinstance(time_blocks[0], list):
         time_blocks = time_blocks[0]
 
     currentAppointment = None
