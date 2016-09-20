@@ -14,7 +14,7 @@ SCOPES = ['https://www.googleapis.com/auth/calendar',
 
 CLIENT_SECRET_FILE = 'client_secret.json'
 APPLICATION_NAME = 'Frontline Calendar'
-ABBY_ALI_LUNCH = "ABBY_ALI_LUNCH"
+LUNCH = "LUNCH"
 
 
 class Range:
@@ -32,7 +32,7 @@ class Range:
         # other_range does not overlap at all
         if other_range.end <= self.start or other_range.start >= self.end:
             return [self]
-        # other_range complete overlaps
+        # other_range completely overlaps
         if other_range.start <= self.start and other_range.end >= self.end:
             return [Range(self.start, self.start)]
         # other_range overlaps beginning
@@ -74,10 +74,38 @@ def appointment_summary(appointment):
         summary = 'On Phones'
     elif appointment.appointment_type == 'C':
         summary = 'On Chat'
-    elif appointment.appointment_type == ABBY_ALI_LUNCH:
+    elif appointment.appointment_type == LUNCH:
         summary = 'Abby and Ali Lunch Date'
 
     return summary
+
+
+def row_for_name(service, spreadsheet_id, name, midnight):
+    range_name = "'{date}'!A1:CC100".format(date=midnight.strftime("%a %m.%d.%y"))
+
+    try:
+        result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=range_name).execute()
+    except HttpError:
+        print("Could not find cells on spreadsheet in range {0}".format(range_name))
+        return None
+
+    if 'values' not in result:
+        print("Could not find cells on spreadsheet in range {0}".format(range_name))
+        return None
+
+    if 'majorDimension' not in result or result['majorDimension'] != 'ROWS':
+        print("majorDimension must be ROWS")
+        return None
+
+    cells = result.get('values', [])
+    row = None
+    for row_index in range(0, len(cells)):
+        row_cells = cells[row_index]
+        if name in row_cells:
+            row = row_index + 1
+            print("Found {name} on row {row} on {date}".format(name=name, row=row, date=midnight))
+
+    return row
 
 
 def appointments_from_google_sheet(service, spreadsheet_id, row, midnight):

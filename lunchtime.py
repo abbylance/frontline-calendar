@@ -6,7 +6,7 @@ import arrow
 import httplib2
 from apiclient import discovery
 from appointments import get_credentials, appointments_from_google_sheet, create_google_calendar_events, \
-    create_outlook_calendar_events, Range, Appointment, ABBY_ALI_LUNCH
+    create_outlook_calendar_events, Range, Appointment, LUNCH, row_for_name
 from exchangelib import DELEGATE
 from exchangelib.account import Account
 from exchangelib.credentials import Credentials
@@ -26,14 +26,17 @@ def hour_minute_from_fractional_hour(fractional):
 
 def main():
     parser = argparse.ArgumentParser(parents=[tools.argparser])
-    parser.add_argument('date', help='What date to start looking at the calendar? Use format YYYY-MM-DD.')
-    parser.add_argument('look_ahead_days', help='How many days to look ahead from the starting date?')
-    parser.add_argument('--abby_row', help='Which row in the spreadsheet is Abby\'s schedule on?')
-    parser.add_argument('--ali_row', help='Which row in the spreadsheet is Ali\'s schedule on?')
+    parser.add_argument('--date', help='What date to start looking at the calendar? Use format YYYY-MM-DD.')
+    parser.add_argument('--look_ahead_days', help='How many days to look ahead from the starting date?')
+    parser.add_argument('--first_name', help='Name of first person on lunch date')
+    parser.add_argument('--second_name', help='Name of second person on lunch date')
     parser.add_argument('--google_calendar', action='store_true')
     parser.add_argument('--outlook_calendar', action='store_true')
     parser.add_argument('--spreadsheet_id', help='The ID of the ECBU Luminate Support Weekly Schedule spreadsheet', default='1RgDgDRcyAFDdkEyRH7m_4QOtJ7e-kv324hEWE4JuwgI')
-    parser.add_argument('--exchange_username', help='The username you use in Outlook, should be Firstname.Lastname@Blackbaud.me')
+    parser.add_argument('--exchange_username',
+                        help='The username you use in Outlook, should be Firstname.Lastname@Blackbaud.me')
+    parser.add_argument('--primary_smtp_address',
+                        help='Your Outlook email address, should be Firstname.Lastname@blackbaud.com')
     parser.add_argument('--exchange_password', help='The password you use in Outlook')
 
     flags = parser.parse_args()
@@ -59,23 +62,35 @@ def main():
     exchange_account = None
     if flags.outlook_calendar:
         exchange_credentials = Credentials(username=flags.exchange_username, password=flags.exchange_password)
-        exchange_account = Account(primary_smtp_address='Abigail.Lance@blackbaud.com', credentials=exchange_credentials, autodiscover=True, access_type=DELEGATE)
+        exchange_account = Account(primary_smtp_address=flags.primary_smtp_address, credentials=exchange_credentials,
+                                   autodiscover=True, access_type=DELEGATE)
 
     for date in dates:
         midnight = arrow.Arrow(date.year, date.month, date.day, tzinfo='America/Chicago')
-        abby_appointments = appointments_from_google_sheet(sheets_service, flags.spreadsheet_id, flags.abby_row, midnight)
-        ali_appointments = appointments_from_google_sheet(sheets_service, flags.spreadsheet_id, flags.ali_row, midnight)
+
+        first_row = row_for_name(sheets_service, flags.spreadsheet_id, flags.first_name, date)
+        if not first_row:
+            print("Could not find row for {name} on {date}, will skip to next day".format(name=flags.first_name, date=date))
+            continue
+
+        second_row = row_for_name(sheets_service, flags.spreadsheet_id, flags.second_name, date)
+        if not second_row:
+            print("Could not find row for {name} on {date}, will skip to next day".format(name=flags.second_name, date=date))
+            continue
+
+        first_appointments = appointments_from_google_sheet(sheets_service, flags.spreadsheet_id, first_row, midnight)
+        second_appointments = appointments_from_google_sheet(sheets_service, flags.spreadsheet_id, second_row, midnight)
 
         if date.weekday() in [5, 6]:  # skip weekends
             continue
 
         # if no appointments are found, don't try to schedule lunch
-        if not abby_appointments or not ali_appointments:
+        if not first_appointments or not second_appointments:
             print("No schedule yet defined for {0}".format(date))
             continue
 
         lunch_ranges = [Range(LUNCH_EARLIEST, LUNCH_LATEST)]
-        for appointment in abby_appointments + ali_appointments:
+        for appointment in first_appointments + second_appointments:
             if appointment.appointment_type in ['F', 'C', 'PTO']:
                 new_lunch_ranges = []
                 appointment_range = Range(fractional_hour(appointment.start_time), fractional_hour(appointment.end_time))
@@ -90,7 +105,7 @@ def main():
                                                            minute=hour_minute_from_fractional_hour(r.start)[1]),
                                           midnight.replace(hour=hour_minute_from_fractional_hour(r.end)[0],
                                                            minute=hour_minute_from_fractional_hour(r.end)[1]),
-                                          ABBY_ALI_LUNCH) for r in lunch_ranges]
+                                          LUNCH) for r in lunch_ranges]
 
         if google_calendar_service:
             events_made = create_google_calendar_events(lunch_appointments, google_calendar_service)
